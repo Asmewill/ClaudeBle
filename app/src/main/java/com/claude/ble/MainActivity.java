@@ -220,7 +220,8 @@ public class MainActivity extends AppCompatActivity {
                         if (!granted) { allGranted = false; break; }
                     }
                     if (allGranted) {
-                        performScan();
+                        // 权限授予后，继续检查蓝牙开关
+                        checkBluetoothEnabledAndScan();
                     } else {
                         showToast("需要蓝牙和位置权限才能扫描设备");
                     }
@@ -230,9 +231,9 @@ public class MainActivity extends AppCompatActivity {
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
                     if (result.getResultCode() == Activity.RESULT_OK) {
-                        checkPermissionsAndScan();
+                        performScan();
                     } else {
-                        showToast("请开启蓝牙");
+                        showToast("请开启蓝牙后再试");
                     }
                 });
     }
@@ -257,21 +258,15 @@ public class MainActivity extends AppCompatActivity {
     // ============================================================
 
     private void onScanButtonClick() {
-        int timeout;
+        // 验证超时时间输入
         try {
-            timeout = Integer.parseInt(etTimeout.getText().toString().trim());
+            int timeout = Integer.parseInt(etTimeout.getText().toString().trim());
             if (timeout <= 0) throw new NumberFormatException();
         } catch (NumberFormatException e) {
             showDialog("错误", "请输入有效的扫描超时时间！");
             return;
         }
-
-        // Check BT enabled
-        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled()) {
-            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-            enableBtLauncher.launch(enableBtIntent);
-            return;
-        }
+        // 第一步：先确保所有运行时权限都已获得
         checkPermissionsAndScan();
     }
 
@@ -279,21 +274,35 @@ public class MainActivity extends AppCompatActivity {
         List<String> permissionsNeeded = new ArrayList<>();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+
+            // Android 12+：BLUETOOTH_SCAN + BLUETOOTH_CONNECT 都需要先申请
             if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN))
                 permissionsNeeded.add(Manifest.permission.BLUETOOTH_SCAN);
             if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT))
                 permissionsNeeded.add(Manifest.permission.BLUETOOTH_CONNECT);
         } else {
-            // Android 6~11
+            // Android 6~11：需要位置权限
             if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION))
                 permissionsNeeded.add(Manifest.permission.ACCESS_FINE_LOCATION);
-            if (!hasPermission(Manifest.permission.BLUETOOTH))
-                permissionsNeeded.add(Manifest.permission.BLUETOOTH);
         }
 
         if (!permissionsNeeded.isEmpty()) {
+            // 先请求权限，授权后在回调里继续流程
             permissionLauncher.launch(permissionsNeeded.toArray(new String[0]));
+        } else {
+            // 权限已齐，再检查蓝牙开关
+            checkBluetoothEnabledAndScan();
+        }
+    }
+
+    private void checkBluetoothEnabledAndScan() {
+        if (bluetoothAdapter == null) {
+            showToast("本设备不支持BLE蓝牙");
+            return;
+        }
+        if (!bluetoothAdapter.isEnabled()) {
+            // 此时 BLUETOOTH_CONNECT 已授权，可以安全地弹出开启蓝牙请求
+            Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+            enableBtLauncher.launch(enableBtIntent);
         } else {
             performScan();
         }
@@ -525,20 +534,20 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt,
-                BluetoothGattCharacteristic characteristic) {
+                                            BluetoothGattCharacteristic characteristic) {
             handleNotification(characteristic);
         }
 
         // For Android 13+
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt,
-                BluetoothGattCharacteristic characteristic, byte[] value) {
+                                            BluetoothGattCharacteristic characteristic, byte[] value) {
             handleNotification(characteristic, value);
         }
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt,
-                BluetoothGattCharacteristic characteristic, int status) {
+                                          BluetoothGattCharacteristic characteristic, int status) {
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.w(TAG, "Characteristic write failed, status: " + status);
             }
@@ -546,13 +555,13 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void onDescriptorWrite(BluetoothGatt gatt,
-                BluetoothGattDescriptor descriptor, int status) {
+                                      BluetoothGattDescriptor descriptor, int status) {
             Log.d(TAG, "Descriptor write status: " + status);
         }
     };
 
     private void enableNotification(BluetoothGatt gatt,
-            BluetoothGattCharacteristic characteristic) {
+                                    BluetoothGattCharacteristic characteristic) {
         gatt.setCharacteristicNotification(characteristic, true);
         BluetoothGattDescriptor descriptor =
                 characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID);
@@ -708,7 +717,7 @@ public class MainActivity extends AppCompatActivity {
     // ============================================================
 
     private synchronized void writeCharacteristic(BluetoothGattCharacteristic characteristic,
-            byte[] data) {
+                                                  byte[] data) {
         if (bluetoothGatt == null || !isConnected) return;
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

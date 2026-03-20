@@ -45,3 +45,16 @@ gradlew.bat assembleDebug
 - 第一次打开项目时，Android Studio 会自动下载 gradle-wrapper.jar 和所有依赖
 - 请确保手机开启蓝牙，并授予所有请求的权限
 - 默认过滤名称为 "mpy-temp"，可在界面上修改
+
+## ClaudeBle 生成提示词
+- 1.python代码为blue.txt文件（已上传），运行这个blue.txt文件后，代码UI界面为blueui.png
+- 2.根据python版本代码，以及UI界面效果，生成一个Android原生项目(java)，具备python版本的全部功能，
+- 3.一定要实现blueui.png所展示的全部功能.
+- 4.要求适配，安卓最新的系统，适配绝大部分安卓手机，如果有权限请求，也要一并适配。
+- 5.生成的项目名称为ClaudeBle， 放到E:\AndroidRel\OpenClawSpace文件夹下面.
+- 6.确保项目可以正常构建，运行，开始吧。
+
+## ClaudeBle 改进提示词
+- 1.连接上蓝牙之后，大概3到5s，就自动断开连接了，请修复，确保蓝牙连接后，可以稳定连接。
+
+
