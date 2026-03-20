@@ -438,31 +438,26 @@ public class MainActivity extends AppCompatActivity {
             if (heartbeatCharacteristic == null) {
                 mainHandler.post(() -> updateStatus("未找到心跳特性 UUID，请检查设置")); return;
             }
-            mainHandler.post(() -> updateStatus("状态：已连接到 [" + selectedDeviceAddress + "]"));
+            mainHandler.post(() -> {
+                updateStatus("状态：已连接到 [" + selectedDeviceAddress + "]");
+                // ★ 关键：服务发现完立即启动心跳，不等 Descriptor 写完
+                // 外设超时（状态码19）就是因为心跳启动太晚
+                keepHeartbeat = true;
+                startHeartbeat();
+            });
 
-            // ★ 修复3：开启通知也走 GATT 队列，保证串行
+            // 开启通知走队列（在心跳已经开始跑的基础上做）
             enqueueEnableNotification(gatt, heartbeatCharacteristic);
         }
 
-        // ★ 修复4：Descriptor 写完后才解锁队列，并在此回调里启动心跳
+        // Descriptor 写完后解锁队列
         @Override
         public void onDescriptorWrite(BluetoothGatt gatt,
                                       BluetoothGattDescriptor descriptor, int status) {
             Log.d(TAG, "onDescriptorWrite status=" + status);
             gattBusy.set(false);
-            drainQueue();    // 解锁队列，执行后续操作
-
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                // 心跳 Descriptor 写成功后再启动心跳，完全避免并发
-                String hbUuid = etHeartbeatUuid.getText().toString().trim();
-                if (descriptor.getCharacteristic().getUuid().toString()
-                        .equalsIgnoreCase(hbUuid)) {
-                    mainHandler.post(() -> {
-                        keepHeartbeat = true;
-                        startHeartbeat();
-                    });
-                }
-            }
+            drainQueue();
+            // 注意：心跳已在 onServicesDiscovered 里启动，此处不再重复启动
         }
 
         // ★ 修复5：每次 Characteristic 写完后解锁队列
@@ -507,10 +502,9 @@ public class MainActivity extends AppCompatActivity {
                 Log.d(TAG, "writeDescriptor=" + wr);
                 if (!wr) { gattBusy.set(false); drainQueue(); } // 写失败也要解锁
             } else {
-                // 无 CCCD，直接解锁并启动心跳
+                // 无 CCCD，直接解锁（心跳已在 onServicesDiscovered 里启动）
                 gattBusy.set(false);
                 drainQueue();
-                mainHandler.post(() -> { keepHeartbeat = true; startHeartbeat(); });
             }
         });
     }
@@ -632,15 +626,38 @@ public class MainActivity extends AppCompatActivity {
     private void startHeartbeat() {
         stopHeartbeat();
         heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
-        // ★ 首次延迟 1s，让 Descriptor 写入彻底完成后再开始心跳
+        // ★ 核心修复：首次立即发送，之后每秒一次；绕过 GATT 队列直接写
         heartbeatFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
-            if (!keepHeartbeat || !isConnected || heartbeatCharacteristic == null) {
+            if (!keepHeartbeat || !isConnected
+                    || heartbeatCharacteristic == null || bluetoothGatt == null) {
                 stopHeartbeat(); return;
             }
-            // 心跳也走队列，不和其他写操作并发
-            enqueueWrite(heartbeatCharacteristic, "1".getBytes(StandardCharsets.UTF_8));
+            // 心跳用 WRITE_NO_RESPONSE 直接发，不走队列，不等 ACK
+            // 避免队列繁忙时心跳被延迟 → 外设超时主动断连（状态码 19）
+            writeHeartbeatDirect("1".getBytes(StandardCharsets.UTF_8));
             mainHandler.post(() -> appendToHeartbeatWindow("已发送心跳: 1\n"));
-        }, 1, 1, TimeUnit.SECONDS);
+        }, 0, 1, TimeUnit.SECONDS);
+    }
+
+    /**
+     * 心跳专用写：WRITE_TYPE_NO_RESPONSE，绕过队列直接发。
+     * 无需等待对端 ACK，每秒准时到达外设，防止外设超时断连。
+     */
+    private void writeHeartbeatDirect(byte[] data) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                bluetoothGatt.writeCharacteristic(
+                        heartbeatCharacteristic, data,
+                        BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+            } else {
+                heartbeatCharacteristic.setValue(data);
+                heartbeatCharacteristic.setWriteType(
+                        BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
+                bluetoothGatt.writeCharacteristic(heartbeatCharacteristic);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Heartbeat direct write failed: " + e.getMessage());
+        }
     }
 
     private void stopHeartbeat() {
