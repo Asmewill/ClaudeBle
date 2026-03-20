@@ -1,0 +1,424 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="8dp"
+    android:background="@color/window_bg">
+
+    <!-- 1. 设备扫描区域 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="2.2"
+        android:orientation="horizontal"
+        android:background="@drawable/border_frame"
+        android:padding="6dp">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="设备扫描"
+                android:textSize="12sp"
+                android:textColor="@color/title_color"
+                android:paddingBottom="2dp"/>
+
+            <ListView
+                android:id="@+id/lv_devices"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@color/list_bg"
+                android:divider="@color/divider_color"
+                android:dividerHeight="1dp"
+                android:textSize="12sp"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.6"
+            android:orientation="vertical"
+            android:paddingStart="8dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="6dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="设备名称过滤:"
+                    android:textSize="11sp"
+                    android:textColor="@color/label_color"/>
+
+                <EditText
+                    android:id="@+id/et_filter"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1.2"
+                    android:text="mpy-temp"
+                    android:textSize="11sp"
+                    android:padding="4dp"
+                    android:background="@drawable/edit_bg"
+                    android:singleLine="true"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="超时时间（秒）:"
+                    android:textSize="11sp"
+                    android:textColor="@color/label_color"/>
+
+                <EditText
+                    android:id="@+id/et_timeout"
+                    android:layout_width="0dp"
+                    android:layout_height="34dp"
+                    android:layout_weight="1.2"
+                    android:text="5"
+                    android:textSize="11sp"
+                    android:padding="4dp"
+                    android:background="@drawable/edit_bg"
+                    android:inputType="number"
+                    android:singleLine="true"/>
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btn_scan"
+                android:layout_width="match_parent"
+                android:layout_height="36dp"
+                android:text="扫描设备"
+                android:textSize="12sp"
+                android:textColor="@color/white"
+                android:background="@drawable/btn_primary"
+                android:padding="4dp"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 2. 设备控制区域 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1.3"
+        android:orientation="vertical"
+        android:background="@drawable/border_frame"
+        android:padding="4dp"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="设备控制"
+            android:textSize="12sp"
+            android:textColor="@color/title_color"
+            android:paddingBottom="2dp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_connect"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="连接设备"
+                android:textSize="10sp"
+                android:textColor="@color/white"
+                android:background="@drawable/btn_success"
+                android:layout_margin="1dp"
+                android:padding="2dp"/>
+
+            <Button
+                android:id="@+id/btn_disconnect"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="断开设备"
+                android:textSize="10sp"
+                android:textColor="@color/white"
+                android:background="@drawable/btn_danger"
+                android:layout_margin="1dp"
+                android:padding="2dp"/>
+
+            <Button
+                android:id="@+id/btn_open_pump"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="打开清水泵"
+                android:textSize="10sp"
+                android:background="@drawable/btn_control"
+                android:layout_margin="1dp"
+                android:padding="2dp"/>
+
+            <Button
+                android:id="@+id/btn_open_valve"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="打开清水阀"
+                android:textSize="10sp"
+                android:background="@drawable/btn_control"
+                android:layout_margin="1dp"
+                android:padding="2dp"/>
+
+            <Button
+                android:id="@+id/btn_close_pump"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="关闭清水泵"
+                android:textSize="10sp"
+                android:background="@drawable/btn_control"
+                android:layout_margin="1dp"
+                android:padding="2dp"/>
+
+            <Button
+                android:id="@+id/btn_close_valve"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="关闭清水阀"
+                android:textSize="10sp"
+                android:background="@drawable/btn_control"
+                android:layout_margin="1dp"
+                android:padding="2dp"/>
+
+            <Button
+                android:id="@+id/btn_open_sewage"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="打开污水泵"
+                android:textSize="10sp"
+                android:background="@drawable/btn_control"
+                android:layout_margin="1dp"
+                android:padding="2dp"/>
+
+            <Button
+                android:id="@+id/btn_close_sewage"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="关闭污水泵"
+                android:textSize="10sp"
+                android:background="@drawable/btn_control"
+                android:layout_margin="1dp"
+                android:padding="2dp"/>
+
+            <Button
+                android:id="@+id/btn_charge_close"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="站充电功能关"
+                android:textSize="9sp"
+                android:background="@drawable/btn_control"
+                android:layout_margin="1dp"
+                android:padding="2dp"/>
+
+            <Button
+                android:id="@+id/btn_charge_open"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:text="站充电功能开"
+                android:textSize="9sp"
+                android:background="@drawable/btn_control"
+                android:layout_margin="1dp"
+                android:padding="2dp"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 3. UUID 设置区域 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1.5"
+        android:orientation="vertical"
+        android:background="@drawable/border_frame"
+        android:padding="6dp"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="特性 UUID 设置"
+            android:textSize="12sp"
+            android:textColor="@color/title_color"
+            android:paddingBottom="4dp"/>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="4dp">
+
+            <TextView
+                android:layout_width="110dp"
+                android:layout_height="wrap_content"
+                android:text="数据特性 UUID:"
+                android:textSize="11sp"
+                android:textColor="@color/label_color"/>
+
+            <EditText
+                android:id="@+id/et_data_uuid"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_weight="1"
+                android:text="00001001-0000-1000-8000-00805f9b34fb"
+                android:textSize="11sp"
+                android:padding="4dp"
+                android:background="@drawable/edit_bg"
+                android:singleLine="true"/>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:layout_width="110dp"
+                android:layout_height="wrap_content"
+                android:text="心跳特性 UUID:"
+                android:textSize="11sp"
+                android:textColor="@color/label_color"/>
+
+            <EditText
+                android:id="@+id/et_heartbeat_uuid"
+                android:layout_width="0dp"
+                android:layout_height="32dp"
+                android:layout_weight="1"
+                android:text="00001004-0000-1000-8000-00805f9b34fb"
+                android:textSize="11sp"
+                android:padding="4dp"
+                android:background="@drawable/edit_bg"
+                android:singleLine="true"/>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 4. 数据窗口区域 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="4"
+        android:orientation="horizontal"
+        android:layout_marginTop="6dp">
+
+        <!-- 数据收发窗口 -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:background="@drawable/border_frame"
+            android:padding="4dp"
+            android:layout_marginEnd="3dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="数据收发窗口"
+                android:textSize="12sp"
+                android:textColor="@color/title_color"
+                android:paddingBottom="2dp"/>
+
+            <ScrollView
+                android:id="@+id/sv_data"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@color/text_area_bg"
+                android:fadeScrollbars="false">
+
+                <TextView
+                    android:id="@+id/tv_data"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="4dp"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_color"
+                    android:fontFamily="monospace"/>
+            </ScrollView>
+        </LinearLayout>
+
+        <!-- 心跳收发窗口 -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:background="@drawable/border_frame"
+            android:padding="4dp"
+            android:layout_marginStart="3dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="心跳收发窗口"
+                android:textSize="12sp"
+                android:textColor="@color/title_color"
+                android:paddingBottom="2dp"/>
+
+            <ScrollView
+                android:id="@+id/sv_heartbeat"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:background="@color/text_area_bg"
+                android:fadeScrollbars="false">
+
+                <TextView
+                    android:id="@+id/tv_heartbeat"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="4dp"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_color"
+                    android:fontFamily="monospace"/>
+            </ScrollView>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 5. 状态栏 -->
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="match_parent"
+        android:layout_height="30dp"
+        android:text="状态：未连接"
+        android:textSize="12sp"
+        android:textColor="@color/status_color"
+        android:gravity="center_vertical"
+        android:background="@color/status_bg"
+        android:paddingStart="8dp"
+        android:layout_marginTop="4dp"/>
+
+</LinearLayout>
