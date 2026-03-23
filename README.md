@@ -54,3 +54,6 @@ gradlew.bat assembleDebug
 - 5.生成的项目名称为ClaudeBle， 放到E:\AndroidRel\OpenClawSpace文件夹下面.
 - 6.确保项目可以正常构建，运行，开始吧。
 
+## BUG 提示词
+- 1.把心跳收发窗口和数据收发窗口的TextView换成EditText，其他功能维持不变，不要变动.
+

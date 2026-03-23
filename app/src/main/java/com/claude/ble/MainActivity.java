@@ -117,7 +117,8 @@ public class MainActivity extends AppCompatActivity {
     private ListView   lvDevices;
     private EditText   etFilter, etTimeout, etDataUuid, etHeartbeatUuid;
     private ScrollView svData, svHeartbeat;
-    private TextView   tvData, tvHeartbeat, tvStatus;
+    private EditText   tvData, tvHeartbeat;
+    private TextView   tvStatus;
     private Button     btnScan;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
