@@ -23,7 +23,6 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.Editable;
 import android.util.Log;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -36,7 +35,6 @@ import android.widget.Toast;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
@@ -44,11 +42,8 @@ import androidx.core.content.ContextCompat;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -61,7 +56,7 @@ public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "ClaudeBLE";
 
-    // ── 控制功能表 ──────────────────────────────────────────────
+    // 控制功能表
     private static final Map<Integer, String> CONTROL_FUNCTION = new HashMap<>();
     static {
         CONTROL_FUNCTION.put(0x1,    "打开,清水阀");
@@ -80,61 +75,53 @@ public class MainActivity extends AppCompatActivity {
         CONTROL_FUNCTION.put(0x2000, "使用在位传感器");
     }
 
-    // CCCD UUID
     private static final UUID CCCD_UUID =
             UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
-    private static final long DISCOVER_SERVICES_DELAY_MS = 400;
-    private static final long HEARTBEAT_INTERVAL_MS = 1000;
-    private static final long GATT_OP_TIMEOUT_MS = 3000;
-    private static final long GATT_NO_RESPONSE_TIMEOUT_MS = 500;
-    private static final long AUTO_RECONNECT_DELAY_MS = 1500;
-    private static final int MAX_AUTO_RECONNECT_ATTEMPTS = 3;
-    private static final int MAX_DATA_LOG_CHARS = 6000;
-    private static final int MAX_HEARTBEAT_LOG_CHARS = 12000;
 
-    // ── BLE 对象 ─────────────────────────────────────────────────
+    // 超时保护：GATT 操作超过此时间未回调则强制解锁
+    private static final long GATT_OP_TIMEOUT_MS = 3000;
+
+    // BLE
     private BluetoothAdapter            bluetoothAdapter;
     private BluetoothLeScanner          bleScanner;
     private BluetoothGatt               bluetoothGatt;
     private BluetoothGattCharacteristic dataCharacteristic;
     private BluetoothGattCharacteristic heartbeatCharacteristic;
 
-    // ── GATT 串行操作队列（核心修复）────────────────────────────
-    // Android BLE GATT 是单线程总线：同一时刻只能有一个 write/descriptor 操作在途。
-    // 把所有操作放入队列，每次只执行队头，回调完成后再驱动下一个。
-    private final Queue<Runnable>  gattQueue = new LinkedList<>();
-    private final AtomicBoolean    gattBusy  = new AtomicBoolean(false);
+    // ── GATT 串行队列 ────────────────────────────────────────────
+    // 用一个独立单线程来串行执行所有 GATT 操作，确保同一时刻只有一个在途
+    private final ScheduledExecutorService gattExecutor =
+            Executors.newSingleThreadScheduledExecutor();
+    private final AtomicBoolean gattBusy = new AtomicBoolean(false);
+    // 超时保护 Runnable，防止回调丢失导致队列永久死锁
+    private Runnable gattTimeoutRunnable;
 
-    // ── 状态 ─────────────────────────────────────────────────────
+    // 心跳专用执行器（独立于 GATT 队列）
+    private ScheduledExecutorService heartbeatExecutor;
+    private ScheduledFuture<?>        heartbeatFuture;
+
+    // 状态
     private volatile boolean isScanning    = false;
     private volatile boolean isConnected   = false;
     private volatile boolean keepHeartbeat = false;
-    private volatile boolean userInitiatedDisconnect = false;
-    private double   totalFlow      = 0.0;
-    private long     lastTimestampMs = -1;
+    private double   totalFlow       = 0.0;
+    private long     lastTimestampMs  = -1;
     private String   selectedDeviceAddress = null;
-    private int      reconnectAttempts = 0;
 
-    // ── 扫描结果 ──────────────────────────────────────────────────
+    // 扫描结果
     private final List<ScanResult> scanResultList    = new ArrayList<>();
     private final List<String>     deviceDisplayList = new ArrayList<>();
     private ArrayAdapter<String>   deviceAdapter;
 
-    // ── UI ────────────────────────────────────────────────────────
+    // UI
     private ListView   lvDevices;
     private EditText   etFilter, etTimeout, etDataUuid, etHeartbeatUuid;
     private ScrollView svData, svHeartbeat;
-    private EditText   tvData, tvHeartbeat;
-    private TextView   tvStatus;
+    private TextView   tvData, tvHeartbeat, tvStatus;
     private Button     btnScan;
 
-    // ── 调度 ──────────────────────────────────────────────────────
-    private final Handler            mainHandler = new Handler(Looper.getMainLooper());
-    private ScheduledExecutorService heartbeatExecutor;
-    private ScheduledFuture<?>       heartbeatFuture;
-    private Runnable                 stopScanRunnable;
-    private Runnable                 gattTimeoutRunnable;
-    private Runnable                 reconnectRunnable;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Runnable      stopScanRunnable;
 
     private ActivityResultLauncher<String[]> permissionLauncher;
     private ActivityResultLauncher<Intent>   enableBtLauncher;
@@ -159,6 +146,7 @@ public class MainActivity extends AppCompatActivity {
         stopHeartbeat();
         stopScan();
         closeGatt();
+        gattExecutor.shutdownNow();
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -177,8 +165,6 @@ public class MainActivity extends AppCompatActivity {
         tvHeartbeat     = findViewById(R.id.tv_heartbeat);
         tvStatus        = findViewById(R.id.tv_status);
         btnScan         = findViewById(R.id.btn_scan);
-        configureLogView(tvData);
-        configureLogView(tvHeartbeat);
 
         deviceAdapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_list_item_1, deviceDisplayList);
@@ -215,7 +201,6 @@ public class MainActivity extends AppCompatActivity {
                     if (all) checkBluetoothEnabledAndScan();
                     else     showToast("需要蓝牙和位置权限才能扫描设备");
                 });
-
         enableBtLauncher = registerForActivityResult(
                 new ActivityResultContracts.StartActivityForResult(),
                 result -> {
@@ -268,8 +253,7 @@ public class MainActivity extends AppCompatActivity {
         if (bluetoothAdapter == null) { showToast("本设备不支持BLE蓝牙"); return; }
         if (!bluetoothAdapter.isEnabled())
             enableBtLauncher.launch(new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE));
-        else
-            performScan();
+        else performScan();
     }
 
     private void performScan() {
@@ -279,19 +263,14 @@ public class MainActivity extends AppCompatActivity {
         selectedDeviceAddress = null;
         updateStatus("扫描中，请稍等...");
         btnScan.setText("停止扫描");
-
         bleScanner = bluetoothAdapter.getBluetoothLeScanner();
-        if (bleScanner == null) {
-            showToast("无法获取BLE扫描器"); btnScan.setText("扫描设备"); return;
-        }
-        ScanSettings settings = new ScanSettings.Builder()
-                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build();
-        bleScanner.startScan(null, settings, scanCallback);
+        if (bleScanner == null) { showToast("无法获取BLE扫描器"); btnScan.setText("扫描设备"); return; }
+        bleScanner.startScan(null,
+                new ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build(),
+                scanCallback);
         isScanning = true;
-
         int sec = 5;
-        try { sec = Integer.parseInt(etTimeout.getText().toString().trim()); }
-        catch (NumberFormatException ignored) {}
+        try { sec = Integer.parseInt(etTimeout.getText().toString().trim()); } catch (Exception ignored) {}
         stopScanRunnable = this::stopScanAndUpdateUI;
         mainHandler.postDelayed(stopScanRunnable, sec * 1000L);
     }
@@ -305,8 +284,7 @@ public class MainActivity extends AppCompatActivity {
         stopScan();
         mainHandler.post(() -> {
             btnScan.setText("扫描设备");
-            updateStatus(deviceDisplayList.isEmpty()
-                    ? "未找到符合条件的设备"
+            updateStatus(deviceDisplayList.isEmpty() ? "未找到符合条件的设备"
                     : "扫描完成，找到 " + deviceDisplayList.size() + " 个设备");
         });
     }
@@ -328,10 +306,8 @@ public class MainActivity extends AppCompatActivity {
             });
         }
         @Override public void onScanFailed(int errorCode) {
-            mainHandler.post(() -> {
-                updateStatus("扫描失败，错误码: " + errorCode);
-                btnScan.setText("扫描设备"); isScanning = false;
-            });
+            mainHandler.post(() -> { updateStatus("扫描失败，错误码: " + errorCode);
+                btnScan.setText("扫描设备"); isScanning = false; });
         }
     };
 
@@ -340,12 +316,6 @@ public class MainActivity extends AppCompatActivity {
     // ═════════════════════════════════════════════════════════════
 
     private void connectDevice() {
-        connectDevice(true);
-    }
-
-    private void connectDevice(boolean resetReconnectAttempts) {
-        if (resetReconnectAttempts) reconnectAttempts = 0;
-        userInitiatedDisconnect = false;
         if (selectedDeviceAddress == null || selectedDeviceAddress.isEmpty()) {
             showDialog("错误", "请先选择设备！"); return;
         }
@@ -353,19 +323,13 @@ public class MainActivity extends AppCompatActivity {
                 && !hasPerm(Manifest.permission.BLUETOOTH_CONNECT)) {
             showToast("缺少蓝牙连接权限"); return;
         }
-        cancelPendingReconnect();
-        closeGatt();               // 先彻底关闭旧连接
-        gattQueue.clear();
-        gattBusy.set(false);
+        closeGatt();
         totalFlow = 0.0; lastTimestampMs = -1;
-
         updateStatus("正在连接...");
         stopScan();
-
         BluetoothDevice device = bluetoothAdapter.getRemoteDevice(selectedDeviceAddress);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
-            bluetoothGatt = device.connectGatt(this, false, gattCallback,
-                    BluetoothDevice.TRANSPORT_LE);
+            bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE);
         else
             bluetoothGatt = device.connectGatt(this, false, gattCallback);
     }
@@ -374,22 +338,16 @@ public class MainActivity extends AppCompatActivity {
         if (bluetoothGatt == null || !isConnected) {
             showDialog("错误", "没有设备连接！"); return;
         }
-        userInitiatedDisconnect = true;
         stopHeartbeat();
-        cancelPendingReconnect();
-        cancelGattTimeout();
-        gattQueue.clear();
-        gattBusy.set(false);
         isConnected = false;
         bluetoothGatt.disconnect();
         updateStatus("状态：未连接");
     }
 
-    /** 安全关闭 GATT，必须先 disconnect 再 close */
     private void closeGatt() {
         stopHeartbeat();
         cancelGattTimeout();
-        cancelPendingReconnect();
+        gattBusy.set(false);
         if (bluetoothGatt != null) {
             try { bluetoothGatt.disconnect(); } catch (Exception ignored) {}
             try { bluetoothGatt.close();      } catch (Exception ignored) {}
@@ -398,8 +356,6 @@ public class MainActivity extends AppCompatActivity {
         dataCharacteristic      = null;
         heartbeatCharacteristic = null;
         isConnected = false;
-        gattQueue.clear();
-        gattBusy.set(false);
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -411,241 +367,196 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onConnectionStateChange(BluetoothGatt gatt, int status, int newState) {
             Log.d(TAG, "onConnectionStateChange status=" + status + " newState=" + newState);
-            if (!isCurrentGatt(gatt)) {
-                Log.w(TAG, "Ignoring callback from stale GATT instance");
-                try { gatt.close(); } catch (Exception ignored) {}
-                return;
-            }
-
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 isConnected = true;
-                reconnectAttempts = 0;
-                requestHighConnectionPriority(gatt);
-                updateStatus("已连接，正在发现服务...");
+                gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
+                mainHandler.post(() -> updateStatus("已连接，正在发现服务..."));
+                // 延迟 500ms 再 discoverServices，让底层 BLE 链路稳定
                 mainHandler.postDelayed(() -> {
-                    if (isCurrentGatt(gatt) && isConnected) {
-                        gatt.discoverServices();
-                    }
-                }, DISCOVER_SERVICES_DELAY_MS);
+                    if (bluetoothGatt != null && isConnected) gatt.discoverServices();
+                }, 500);
 
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                Log.w(TAG, "Disconnected, gatt status=" + status);
-                boolean wasConnected = isConnected;
-                boolean shouldReconnect = wasConnected
-                        && !userInitiatedDisconnect
-                        && selectedDeviceAddress != null
-                        && reconnectAttempts < MAX_AUTO_RECONNECT_ATTEMPTS
-                        && (status == 19 || status == 22 || status != BluetoothGatt.GATT_SUCCESS);
+                Log.w(TAG, "Disconnected status=" + status);
+                boolean was = isConnected;
                 isConnected   = false;
                 keepHeartbeat = false;
                 stopHeartbeat();
                 cancelGattTimeout();
-                gattQueue.clear();
                 gattBusy.set(false);
                 dataCharacteristic      = null;
                 heartbeatCharacteristic = null;
-                if (bluetoothGatt == gatt) {
+                if (bluetoothGatt != null) {
                     try { bluetoothGatt.close(); } catch (Exception ignored) {}
                     bluetoothGatt = null;
                 }
-                updateStatus(wasConnected
+                mainHandler.post(() -> updateStatus(was
                         ? "状态：连接已断开 (状态码=" + status + ")"
-                        : "状态：未连接");
-                if (shouldReconnect) {
-                    scheduleAutoReconnect(status);
-                }
+                        : "状态：未连接"));
             }
         }
 
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
-            if (!isCurrentGatt(gatt)) return;
             if (status != BluetoothGatt.GATT_SUCCESS) {
-                updateStatus("服务发现失败: " + status); return;
+                mainHandler.post(() -> updateStatus("服务发现失败: " + status)); return;
             }
             String dataUuidStr = etDataUuid.getText().toString().trim();
             String hbUuidStr   = etHeartbeatUuid.getText().toString().trim();
-            UUID dataUUID, hbUUID;
             try {
-                dataUUID = UUID.fromString(dataUuidStr);
-                hbUUID   = UUID.fromString(hbUuidStr);
-            } catch (IllegalArgumentException e) {
-                showDialog("错误", "UUID 格式不正确: " + e.getMessage());
-                return;
-            }
-            for (BluetoothGattService svc : gatt.getServices()) {
-                BluetoothGattCharacteristic dc = svc.getCharacteristic(dataUUID);
-                if (dc != null) dataCharacteristic = dc;
-                BluetoothGattCharacteristic hc = svc.getCharacteristic(hbUUID);
-                if (hc != null) heartbeatCharacteristic = hc;
+                UUID dataUUID = UUID.fromString(dataUuidStr);
+                UUID hbUUID   = UUID.fromString(hbUuidStr);
+                for (BluetoothGattService svc : gatt.getServices()) {
+                    if (dataCharacteristic == null) dataCharacteristic = svc.getCharacteristic(dataUUID);
+                    if (heartbeatCharacteristic == null) heartbeatCharacteristic = svc.getCharacteristic(hbUUID);
+                }
+            } catch (Exception e) {
+                mainHandler.post(() -> showDialog("错误", "UUID 格式不正确: " + e.getMessage())); return;
             }
             if (heartbeatCharacteristic == null) {
-                updateStatus("未找到心跳特性 UUID，请检查设置"); return;
+                mainHandler.post(() -> updateStatus("未找到心跳特性 UUID，请检查设置")); return;
             }
 
-            if (chooseWriteType(heartbeatCharacteristic, true) == -1) {
-                updateStatus("心跳特性不支持写入，请检查 UUID 是否正确");
-                return;
-            }
+            mainHandler.post(() -> updateStatus("状态：已连接到 [" + selectedDeviceAddress + "]"));
 
-            updateStatus("状态：已连接到 [" + selectedDeviceAddress + "]");
-            enqueueEnableNotification(gatt, heartbeatCharacteristic);
+            // ★ 立即在 gattExecutor 线程上开启通知（串行，不阻塞主线程）
+            gattExecutor.execute(() -> doEnableNotification(gatt, heartbeatCharacteristic));
         }
 
-        // Descriptor 写完后解锁队列
         @Override
         public void onDescriptorWrite(BluetoothGatt gatt,
                                       BluetoothGattDescriptor descriptor, int status) {
-            if (!isCurrentGatt(gatt)) return;
             Log.d(TAG, "onDescriptorWrite status=" + status);
-            cancelGattTimeout();
-            gattBusy.set(false);
-            drainQueue();
-            if (!isConnected) return;
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                Log.w(TAG, "Descriptor write failed, fallback to heartbeat only. status=" + status);
-            }
-            keepHeartbeat = true;
-            startHeartbeat();
+            // ★ 通知开启完成后，立即在 gattExecutor 上启动心跳
+            gattExecutor.execute(() -> {
+                cancelGattTimeout();
+                gattBusy.set(false);
+                // 通知开启成功后启动心跳
+                keepHeartbeat = true;
+                startHeartbeat();
+                Log.d(TAG, "Heartbeat started after descriptor write");
+            });
         }
 
         @Override
         public void onCharacteristicWrite(BluetoothGatt gatt,
-                                          BluetoothGattCharacteristic characteristic,
-                                          int status) {
-            if (!isCurrentGatt(gatt)) return;
-            cancelGattTimeout();
+                                          BluetoothGattCharacteristic characteristic, int status) {
             if (status != BluetoothGatt.GATT_SUCCESS)
-                Log.w(TAG, "CharWrite failed status=" + status);
+                Log.w(TAG, "CharWrite failed status=" + status + " uuid=" + characteristic.getUuid());
+            cancelGattTimeout();
             gattBusy.set(false);
-            drainQueue();
         }
 
         @Override
-        public void onCharacteristicChanged(@NonNull BluetoothGatt gatt,
-                                            @NonNull BluetoothGattCharacteristic characteristic) {
+        public void onCharacteristicChanged(BluetoothGatt gatt,
+                                            BluetoothGattCharacteristic characteristic) {
             handleNotification(characteristic, characteristic.getValue());
         }
 
         @Override
-        public void onCharacteristicChanged(@NonNull BluetoothGatt gatt,
-                                            @NonNull BluetoothGattCharacteristic characteristic,
-                                            @NonNull byte[] value) {
+        public void onCharacteristicChanged(BluetoothGatt gatt,
+                                            BluetoothGattCharacteristic characteristic, byte[] value) {
             handleNotification(characteristic, value);
         }
     };
 
     // ═════════════════════════════════════════════════════════════
-    // GATT 串行队列实现
+    // GATT 操作实现（在 gattExecutor 单线程上执行）
     // ═════════════════════════════════════════════════════════════
 
-    /** 将「写 Descriptor 开通知」封装入队 */
-    private void enqueueEnableNotification(BluetoothGatt gatt,
-                                           BluetoothGattCharacteristic characteristic) {
-        enqueueGattOp(() -> {
-            if (!isCurrentGatt(gatt) || !isConnected || characteristic == null) {
-                gattBusy.set(false);
-                drainQueue();
-                return;
-            }
-            byte[] cccdValue = chooseCccdEnableValue(characteristic);
-            if (cccdValue == null) {
-                keepHeartbeat = true;
-                startHeartbeat();
-                gattBusy.set(false);
-                drainQueue();
-                return;
-            }
-            boolean ok = gatt.setCharacteristicNotification(characteristic, true);
-            Log.d(TAG, "setCharacteristicNotification=" + ok + ", props="
-                    + describeCharacteristicProperties(characteristic));
-            BluetoothGattDescriptor desc = characteristic.getDescriptor(CCCD_UUID);
-            if (ok && desc != null) {
-                scheduleGattTimeout("enableNotification", GATT_OP_TIMEOUT_MS);
-                desc.setValue(cccdValue);
-                boolean wr = gatt.writeDescriptor(desc);
-                Log.d(TAG, "writeDescriptor=" + wr);
-                if (!wr) {
-                    cancelGattTimeout();
-                    gattBusy.set(false);
-                    drainQueue();
-                    keepHeartbeat = true;
-                    startHeartbeat();
-                }
-            } else {
-                keepHeartbeat = true;
-                startHeartbeat();
-                gattBusy.set(false);
-                drainQueue();
-            }
-        });
-    }
+    /**
+     * 开启通知：在 gattExecutor 线程上同步执行，阻塞等待 onDescriptorWrite 回调。
+     * 使用 GATT 超时保护，防止回调丢失死锁。
+     */
+    private void doEnableNotification(BluetoothGatt gatt,
+                                      BluetoothGattCharacteristic characteristic) {
+        if (!isConnected || gatt == null) return;
 
-    /** 将「写 Characteristic」封装入队 */
-    private void enqueueWrite(BluetoothGattCharacteristic characteristic, byte[] data, boolean preferNoResponse) {
-        enqueueGattOp(() -> {
-            if (bluetoothGatt == null || !isConnected || characteristic == null) {
-                gattBusy.set(false);
-                drainQueue();
-                return;
-            }
-            int writeType = chooseWriteType(characteristic, preferNoResponse);
-            if (writeType == -1) {
-                Log.w(TAG, "Characteristic not writable: " + characteristic.getUuid());
-                gattBusy.set(false);
-                drainQueue();
-                return;
-            }
-            scheduleGattTimeout("writeCharacteristic",
-                    writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                            ? GATT_NO_RESPONSE_TIMEOUT_MS : GATT_OP_TIMEOUT_MS);
-            boolean ok;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                int ret = bluetoothGatt.writeCharacteristic(
-                        characteristic, data,
-                        writeType);
-                ok = (ret == 0);
-            } else {
-                characteristic.setValue(data);
-                characteristic.setWriteType(writeType);
-                ok = bluetoothGatt.writeCharacteristic(characteristic);
-            }
-            if (!ok) {
+        gattBusy.set(true);
+        scheduleGattTimeout("enableNotification");
+
+        boolean ok = gatt.setCharacteristicNotification(characteristic, true);
+        Log.d(TAG, "setCharacteristicNotification=" + ok);
+
+        BluetoothGattDescriptor desc = characteristic.getDescriptor(CCCD_UUID);
+        if (desc != null) {
+            desc.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+            boolean wr = gatt.writeDescriptor(desc);
+            Log.d(TAG, "writeDescriptor=" + wr);
+            if (!wr) {
+                // 写失败，立即启动心跳（通知可能不需要 descriptor）
                 cancelGattTimeout();
                 gattBusy.set(false);
-                drainQueue();
-            }
-        });
-    }
-
-    /** 入队 */
-    private synchronized void enqueueGattOp(Runnable op) {
-        gattQueue.add(op);
-        drainQueue();
-    }
-
-    /** 如果队列空闲则取出并执行队头 */
-    private synchronized void drainQueue() {
-        if (gattBusy.get() || gattQueue.isEmpty()) return;
-        Runnable next = gattQueue.poll();
-        if (next == null) return;
-        gattBusy.set(true);
-        next.run();
-    }
-
-    private void scheduleGattTimeout(final String tag, final long timeoutMs) {
-        cancelGattTimeout();
-        gattTimeoutRunnable = () -> {
-            if (!gattBusy.get()) return;
-            Log.w(TAG, "GATT timeout: " + tag);
-            gattBusy.set(false);
-            if ("enableNotification".equals(tag) && isConnected) {
                 keepHeartbeat = true;
                 startHeartbeat();
             }
-            drainQueue();
+            // 写成功则等待 onDescriptorWrite 回调来启动心跳
+        } else {
+            // 无 CCCD，不需要写 descriptor，直接启动心跳
+            Log.d(TAG, "No CCCD found, starting heartbeat directly");
+            cancelGattTimeout();
+            gattBusy.set(false);
+            keepHeartbeat = true;
+            startHeartbeat();
+        }
+    }
+
+    /**
+     * 写 Characteristic（带响应，与 Python 端一致）。
+     * 在 gattExecutor 单线程上执行，阻塞等待 onCharacteristicWrite。
+     */
+    private synchronized void doWriteCharacteristic(BluetoothGattCharacteristic characteristic,
+                                                     byte[] data) {
+        if (bluetoothGatt == null || !isConnected) return;
+
+        // 等待上一个写操作完成（最多等 GATT_OP_TIMEOUT_MS）
+        long deadline = System.currentTimeMillis() + GATT_OP_TIMEOUT_MS;
+        while (gattBusy.get()) {
+            if (System.currentTimeMillis() > deadline) {
+                Log.w(TAG, "GATT busy timeout, force-releasing lock");
+                gattBusy.set(false);
+                break;
+            }
+            try { Thread.sleep(10); } catch (InterruptedException e) { return; }
+        }
+
+        gattBusy.set(true);
+        scheduleGattTimeout("writeChar");
+
+        boolean ok;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            int ret = bluetoothGatt.writeCharacteristic(
+                    characteristic, data,
+                    // ★ 与 Python 一致：使用 WRITE_TYPE_DEFAULT（带响应）
+                    BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            ok = (ret == 0);
+        } else {
+            characteristic.setValue(data);
+            // ★ 与 Python 一致：使用 WRITE_TYPE_DEFAULT（带响应）
+            characteristic.setWriteType(BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+            ok = bluetoothGatt.writeCharacteristic(characteristic);
+        }
+        if (!ok) {
+            Log.w(TAG, "writeCharacteristic returned false");
+            cancelGattTimeout();
+            gattBusy.set(false);
+        }
+        // 成功则等待 onCharacteristicWrite 回调解锁
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // GATT 超时保护
+    // ═════════════════════════════════════════════════════════════
+
+    private void scheduleGattTimeout(final String tag) {
+        cancelGattTimeout();
+        gattTimeoutRunnable = () -> {
+            if (gattBusy.get()) {
+                Log.w(TAG, "GATT timeout for: " + tag + ", force-releasing lock");
+                gattBusy.set(false);
+            }
         };
-        mainHandler.postDelayed(gattTimeoutRunnable, timeoutMs);
+        mainHandler.postDelayed(gattTimeoutRunnable, GATT_OP_TIMEOUT_MS);
     }
 
     private void cancelGattTimeout() {
@@ -667,8 +578,7 @@ public class MainActivity extends AppCompatActivity {
 
         if (charUuid.equalsIgnoreCase(dataUuidStr)) {
             String received = new String(value, StandardCharsets.UTF_8);
-            appendToDataWindow("收到数据: " + received + "\n");
-
+            mainHandler.post(() -> appendToDataWindow("收到数据: " + received + "\n"));
         } else if (charUuid.equalsIgnoreCase(hbUuidStr)) {
             String dataStr = new String(value, StandardCharsets.UTF_8);
             try {
@@ -682,24 +592,25 @@ public class MainActivity extends AppCompatActivity {
                     if ((intPart & e.getKey()) != 0) flags.add(e.getValue());
                 String flagsStr = flags.isEmpty() ? "NUL" : String.join("\n\t", flags);
 
-                long   currentMs   = System.currentTimeMillis();
-                double displayFlow = floatPart * 0.4;
-                double periodFlow  = 0;
+                long   now         = System.currentTimeMillis();
+                double displayFlow = 0, periodFlow = 0;
                 if (lastTimestampMs >= 0) {
-                    double dt  = (currentMs - lastTimestampMs) / 1000.0;
+                    double dt   = (now - lastTimestampMs) / 1000.0;
+                    displayFlow = floatPart * 0.4;
                     periodFlow  = (displayFlow / 60.0) * dt;
                     totalFlow  += periodFlow;
                 }
-                lastTimestampMs = currentMs;
+                lastTimestampMs = now;
 
-                appendToHeartbeatWindow(
-                        "收到返回值:\n\t" + flagsStr + "\n"
-                                + String.format(Locale.US, "\t流速: %.6f L/Min\n", displayFlow)
-                                + String.format(Locale.US, "\t本周期流量: %.6f L\n", periodFlow)
-                                + String.format(Locale.US, "\t总流量: %.6f L\n", totalFlow)
-                                + "------------------------------\n");
+                final double df = displayFlow, pf = periodFlow, tf = totalFlow;
+                final String fs = flagsStr;
+                mainHandler.post(() -> appendToHeartbeatWindow(
+                        "收到返回值:\n\t" + fs + "\n"
+                        + String.format("\t流速: %.6f L/Min\n", df)
+                        + String.format("\t本周期流量: %.6f L\n", pf)
+                        + String.format("\t总流量: %.6f L\n", tf)));
             } catch (Exception e) {
-                appendToHeartbeatWindow("解析错误: " + e.getMessage() + "\n");
+                mainHandler.post(() -> appendToHeartbeatWindow("解析错误: " + e.getMessage() + "\n"));
             }
         }
     }
@@ -722,35 +633,33 @@ public class MainActivity extends AppCompatActivity {
             } catch (Exception ignored) {}
         }
         if (dataCharacteristic == null) { showDialog("错误", "数据特性未找到！"); return; }
-        enqueueWrite(dataCharacteristic, String.valueOf(cmd).getBytes(StandardCharsets.UTF_8), false);
-        appendToDataWindow("已发送控制消息: " + cmd + "\n");
+        final BluetoothGattCharacteristic ch = dataCharacteristic;
+        final byte[] data = String.valueOf(cmd).getBytes(StandardCharsets.UTF_8);
+        gattExecutor.execute(() -> doWriteCharacteristic(ch, data));
+        mainHandler.post(() -> appendToDataWindow("已发送控制消息: " + cmd + "\n"));
     }
 
     // ═════════════════════════════════════════════════════════════
-    // 心跳
+    // 心跳：独立线程，每秒写一次，与 Python 行为完全一致
     // ═════════════════════════════════════════════════════════════
 
     private void startHeartbeat() {
-        if (!keepHeartbeat || !isConnected || heartbeatCharacteristic == null || bluetoothGatt == null) {
-            return;
-        }
-        if (heartbeatFuture != null && !heartbeatFuture.isCancelled() && !heartbeatFuture.isDone()) {
-            return;
-        }
         stopHeartbeat();
-        keepHeartbeat = true;
         heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
-        heartbeatFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
+        heartbeatFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
             if (!keepHeartbeat || !isConnected
                     || heartbeatCharacteristic == null || bluetoothGatt == null) {
-                mainHandler.post(this::stopHeartbeat); return;
+                stopHeartbeat(); return;
             }
-            if (gattBusy.get() || !gattQueue.isEmpty()) {
-                Log.d(TAG, "Skip heartbeat because a GATT operation is already running");
-                return;
-            }
-            enqueueWrite(heartbeatCharacteristic, "1".getBytes(StandardCharsets.UTF_8), true);
-        }, HEARTBEAT_INTERVAL_MS, HEARTBEAT_INTERVAL_MS, TimeUnit.MILLISECONDS);
+            // ★ 关键：与 Python write_gatt_char 默认行为完全一致
+            //   使用 WRITE_TYPE_DEFAULT（带响应写入）
+            //   通过 doWriteCharacteristic 在 gattExecutor 上串行执行
+            //   同时内置超时保护，绝不永久阻塞
+            final byte[] hbData = "1".getBytes(StandardCharsets.UTF_8);
+            final BluetoothGattCharacteristic hbChar = heartbeatCharacteristic;
+            gattExecutor.execute(() -> doWriteCharacteristic(hbChar, hbData));
+            mainHandler.post(() -> appendToHeartbeatWindow("已发送心跳: 1\n"));
+        }, 0, 1, TimeUnit.SECONDS); // 立即开始，每秒一次
     }
 
     private void stopHeartbeat() {
@@ -759,123 +668,23 @@ public class MainActivity extends AppCompatActivity {
         if (heartbeatExecutor != null) { heartbeatExecutor.shutdownNow(); heartbeatExecutor = null; }
     }
 
-    private void scheduleAutoReconnect(int status) {
-        cancelPendingReconnect();
-        final int attempt = ++reconnectAttempts;
-        reconnectRunnable = () -> {
-            reconnectRunnable = null;
-            if (userInitiatedDisconnect || isConnected || selectedDeviceAddress == null) return;
-            updateStatus("连接异常，正在重连 (" + attempt + "/" + MAX_AUTO_RECONNECT_ATTEMPTS
-                    + ")，状态码=" + status);
-            connectDevice(false);
-        };
-        mainHandler.postDelayed(reconnectRunnable, AUTO_RECONNECT_DELAY_MS);
-    }
-
-    private void cancelPendingReconnect() {
-        if (reconnectRunnable != null) {
-            mainHandler.removeCallbacks(reconnectRunnable);
-            reconnectRunnable = null;
-        }
-    }
-
-    private boolean isCurrentGatt(BluetoothGatt gatt) {
-        return gatt != null && gatt == bluetoothGatt;
-    }
-
-    private void requestHighConnectionPriority(BluetoothGatt gatt) {
-        try {
-            boolean requested = gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH);
-            Log.d(TAG, "requestConnectionPriority(high)=" + requested);
-        } catch (Exception e) {
-            Log.w(TAG, "requestConnectionPriority failed: " + e.getMessage());
-        }
-    }
-
-    private int chooseWriteType(BluetoothGattCharacteristic characteristic, boolean preferNoResponse) {
-        int properties = characteristic.getProperties();
-        if (preferNoResponse
-                && (properties & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
-            return BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
-        }
-        if ((properties & BluetoothGattCharacteristic.PROPERTY_WRITE) != 0) {
-            return BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT;
-        }
-        if ((properties & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
-            return BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE;
-        }
-        return -1;
-    }
-
-    private byte[] chooseCccdEnableValue(BluetoothGattCharacteristic characteristic) {
-        int properties = characteristic.getProperties();
-        if ((properties & BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0) {
-            return BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE;
-        }
-        if ((properties & BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0) {
-            return BluetoothGattDescriptor.ENABLE_INDICATION_VALUE;
-        }
-        return null;
-    }
-
-    private String describeCharacteristicProperties(BluetoothGattCharacteristic characteristic) {
-        int properties = characteristic.getProperties();
-        List<String> flags = new ArrayList<>();
-        if ((properties & BluetoothGattCharacteristic.PROPERTY_READ) != 0) flags.add("READ");
-        if ((properties & BluetoothGattCharacteristic.PROPERTY_WRITE) != 0) flags.add("WRITE");
-        if ((properties & BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) flags.add("WRITE_NO_RESPONSE");
-        if ((properties & BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0) flags.add("NOTIFY");
-        if ((properties & BluetoothGattCharacteristic.PROPERTY_INDICATE) != 0) flags.add("INDICATE");
-        return flags.isEmpty() ? "NONE" : String.join("|", flags);
-    }
-
     // ═════════════════════════════════════════════════════════════
-    // 工具方法
+    // 工具
     // ═════════════════════════════════════════════════════════════
 
     private boolean hasPerm(String p) {
         return ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED;
     }
-
-    private void runOnMain(Runnable action) {
-        if (Looper.myLooper() == Looper.getMainLooper()) action.run();
-        else mainHandler.post(action);
+    private void updateStatus(String msg) { mainHandler.post(() -> tvStatus.setText(msg)); }
+    private void appendToDataWindow(String t) {
+        tvData.append(t); svData.post(() -> svData.fullScroll(View.FOCUS_DOWN));
     }
-
-    private void configureLogView(EditText editText) {
-        editText.setShowSoftInputOnFocus(false);
-        editText.setCursorVisible(false);
-        editText.setLongClickable(true);
-        editText.setTextIsSelectable(true);
+    private void appendToHeartbeatWindow(String t) {
+        tvHeartbeat.append(t); svHeartbeat.post(() -> svHeartbeat.fullScroll(View.FOCUS_DOWN));
     }
-
-    private void updateStatus(String msg) {
-        runOnMain(() -> tvStatus.setText(msg));
-    }
-
-    private void appendToDataWindow(String text) {
-        runOnMain(() -> appendLimitedText(tvData, svData, text, MAX_DATA_LOG_CHARS));
-    }
-
-    private void appendToHeartbeatWindow(String text) {
-        runOnMain(() -> appendLimitedText(tvHeartbeat, svHeartbeat, text, MAX_HEARTBEAT_LOG_CHARS));
-    }
-
-    private void appendLimitedText(EditText editText, ScrollView scrollView, String text, int maxChars) {
-        Editable editable = editText.getText();
-        editable.append(text);
-        int overflow = editable.length() - maxChars;
-        if (overflow > 0) {
-            editable.delete(0, overflow);
-        }
-        editText.setSelection(editText.getText().length());
-        scrollView.post(() -> scrollView.fullScroll(View.FOCUS_DOWN));
-    }
-
     private void showToast(String msg) {
         mainHandler.post(() -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show());
     }
-
     private void showDialog(String title, String msg) {
         mainHandler.post(() -> new AlertDialog.Builder(this)
                 .setTitle(title).setMessage(msg)

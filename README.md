@@ -54,7 +54,3 @@ gradlew.bat assembleDebug
 - 5.生成的项目名称为ClaudeBle， 放到E:\AndroidRel\OpenClawSpace文件夹下面.
 - 6.确保项目可以正常构建，运行，开始吧。
 
-## ClaudeBle 改进提示词
-- 1.连接上蓝牙之后，大概3到5s，就自动断开连接了，请修复，确保蓝牙连接后，可以稳定连接。
-
-
