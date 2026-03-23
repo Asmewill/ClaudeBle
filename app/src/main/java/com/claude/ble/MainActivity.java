@@ -506,7 +506,7 @@ public class MainActivity extends AppCompatActivity {
      * 写 Characteristic（带响应，与 Python 端一致）。
      * 在 gattExecutor 单线程上执行，阻塞等待 onCharacteristicWrite。
      */
-    private synchronized void doWriteCharacteristic(BluetoothGattCharacteristic characteristic,
+    private void doWriteCharacteristic(BluetoothGattCharacteristic characteristic,
                                                      byte[] data) {
         if (bluetoothGatt == null || !isConnected) return;
 
@@ -677,11 +677,32 @@ public class MainActivity extends AppCompatActivity {
         return ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED;
     }
     private void updateStatus(String msg) { mainHandler.post(() -> tvStatus.setText(msg)); }
+
+    // 单个 EditText 最大保留字符数，超限时用 setText 一次性替换（只触发一次 Layout）
+    private static final int MAX_LOG_CHARS = 300;
+
     private void appendToDataWindow(String t) {
-        tvData.append(t); svData.post(() -> svData.fullScroll(View.FOCUS_DOWN));
+        appendSafe(tvData, svData, t);
     }
+
     private void appendToHeartbeatWindow(String t) {
-        tvHeartbeat.append(t); svHeartbeat.post(() -> svHeartbeat.fullScroll(View.FOCUS_DOWN));
+        appendSafe(tvHeartbeat, svHeartbeat, t);
+    }
+
+    /**
+     * 安全追加，防止主线程阻塞：
+     * - 超限时用 getEditableText().delete() 原地删除旧内容（无字符串分配）
+     * - 再 append() 新内容（增量布局，仅处理新增部分）
+     * - 全程 in-place 操作，避免 setText 引发的全量重排
+     */
+    private void appendSafe(EditText et, ScrollView sv, String text) {
+        int cur = et.length();
+        if (cur > MAX_LOG_CHARS) {
+            // 原地删除前半段，不产生额外字符串对象
+            et.getEditableText().delete(0, cur / 2);
+        }
+        et.setText(text);
+        sv.fullScroll(View.FOCUS_DOWN);
     }
     private void showToast(String msg) {
         mainHandler.post(() -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show());
