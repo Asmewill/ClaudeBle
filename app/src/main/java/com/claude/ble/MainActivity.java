@@ -647,11 +647,11 @@ public class MainActivity extends AppCompatActivity {
     private void startHeartbeat() {
         stopHeartbeat();
         heartbeatExecutor = Executors.newSingleThreadScheduledExecutor();
-        heartbeatFuture = heartbeatExecutor.scheduleAtFixedRate(() -> {
-            if (!keepHeartbeat || !isConnected
-                    || heartbeatCharacteristic == null || bluetoothGatt == null) {
-                stopHeartbeat(); return;
-            }
+        heartbeatFuture = heartbeatExecutor.scheduleWithFixedDelay(() -> {
+//            if (!keepHeartbeat || !isConnected
+//                    || heartbeatCharacteristic == null || bluetoothGatt == null) {
+//                stopHeartbeat(); return;
+//            }
             // ★ 关键：与 Python write_gatt_char 默认行为完全一致
             //   使用 WRITE_TYPE_DEFAULT（带响应写入）
             //   通过 doWriteCharacteristic 在 gattExecutor 上串行执行
